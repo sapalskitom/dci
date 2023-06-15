@@ -2,6 +2,10 @@
 
 This CloudFormation template creates a new Virtual Private Cloud (VPC) in AWS along with two public subnets. It also provisions an Application Load Balancer (ALB) that utilizes auto-scaling to deploy and host a Flask application using the Gunicorn service. The template returns the URL of the Flask application hosted on the ALB in the Outputs section.
 
+## Video
+
+- The video demonstrating how to create the stack using this template can be accessed [here](https://www.awesomescreenshot.com/video/18373697?key=f03c3a4797d6e026510cfa67ef7da7a9).
+
 ## Prerequisites
 
 - AWS account with appropriate permissions to create resources.
