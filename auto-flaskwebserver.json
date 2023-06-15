@@ -1,0 +1,303 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "This template creates a vpc with two public subnets. Then it creates an application load balancer with an auto-scaling group and a launch configuration. This configuration creates an ec2 instance that installs gunicorn server as a service and installs and configures a flask application. The application is available at the load balancer url which is returned in Outputs section. You can either navigate to the url to display 'Hello World!' message or if you add any text after the root url, it will be displayed instead of the word 'World'. For example /Adam will display 'Hello Adam!'. Try it yourself. ***THIS TEMPLATE WORKS ONLY IN FRANKFURT AND IRELAND REGIONS***",
+
+  "Parameters" : {
+    "InstanceType" : {
+      "Description" : "WebServer EC2 instance type",
+      "Type" : "String",
+      "Default" : "t2.small",
+      "AllowedValues" : [ "t1.micro", "t2.nano", "t2.micro", "t2.small", "t2.medium"]
+,
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription" : "must be the name of an existing EC2 KeyPair."
+    },
+
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+
+    "VpcCIDR": {
+      "Description" : "CIDR for the new VPC (10.1 or 10.2, etc. whatever is not in use)",
+      "Type": "String",
+      "Default": "10.1"
+    }
+
+  },
+
+  "Mappings" : {
+    "LocalUbuntuAMI" : {
+      "eu-west-1" : { "AMI" : "ami-01dd271720c1ba44f"},
+      "eu-central-1" : { "AMI" : "ami-04e601abe3e1a910f"}
+    }
+  },
+
+  "Resources" : {
+
+    "VPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "CidrBlock" : { "Fn::Join" : [ "", [ {"Ref" : "VpcCIDR"},  ".0.0/16" ]]},
+        "Tags" : [ {"Key" : "Name", "Value" : { "Ref" : "AWS::StackName"} } ]
+      }
+    },
+
+    "PublicSubnetA" : {
+      "Type" : "AWS::EC2::Subnet",
+      "DependsOn" : "VPC",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "MapPublicIpOnLaunch" : "true",
+        "AvailabilityZone" : { "Fn::Join" : [ "", [ { "Ref" : "AWS::Region" },  "a" ]]},
+        "CidrBlock" : { "Fn::Join" : [ "", [ {"Ref" : "VpcCIDR"},  ".0.0/24" ]]},
+        "Tags" : [ {"Key" : "Name", "Value" : { "Fn::Join" : [ "", [ {"Ref" : "AWS::StackName"},  "-subnet-public-a" ]]} }, {"Key" : "VPC", "Value" : { "Ref" : "AWS::StackName"} } ]
+      }
+    },
+    "PublicSubnetB" : {
+      "Type" : "AWS::EC2::Subnet",
+      "DependsOn" : "VPC",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "MapPublicIpOnLaunch" : "true",
+        "AvailabilityZone" : { "Fn::Join" : [ "", [ { "Ref" : "AWS::Region" },  "b" ]]},
+        "CidrBlock" : { "Fn::Join" : [ "", [ {"Ref" : "VpcCIDR"},  ".1.0/24" ]]},
+        "Tags" : [ {"Key" : "Name", "Value" : { "Fn::Join" : [ "", [ {"Ref" : "AWS::StackName"},  "-subnet-public-b" ]]} }, {"Key" : "VPC", "Value" : { "Ref" : "AWS::StackName"} } ]
+      }
+    },
+
+    "InternetGateway" : {
+      "Type" : "AWS::EC2::InternetGateway",
+      "DependsOn" : "VPC",
+      "Properties" : {
+        "Tags" : [ {"Key" : "Application", "Value" : { "Ref" : "AWS::StackId"} } ]
+      }
+    },
+
+    "AttachGateway" : {
+       "Type" : "AWS::EC2::VPCGatewayAttachment",
+       "DependsOn" : ["VPC", "InternetGateway"],
+       "Properties" : {
+         "VpcId" : { "Ref" : "VPC" },
+         "InternetGatewayId" : { "Ref" : "InternetGateway" }
+       }
+    },
+
+    "PublicRouteTable" : {
+      "Type" : "AWS::EC2::RouteTable",
+      "Properties" : {
+        "VpcId" : {"Ref" : "VPC"},
+        "Tags" : [ {"Key" : "Application", "Value" : { "Ref" : "AWS::StackId"} } ]
+      }
+    },
+
+    "PublicRoute" : {
+      "Type" : "AWS::EC2::Route",
+      "DependsOn" : "AttachGateway",
+      "Properties" : {
+        "RouteTableId" : { "Ref" : "PublicRouteTable" },
+        "DestinationCidrBlock" : "0.0.0.0/0",
+        "GatewayId" : { "Ref" : "InternetGateway" }
+      }
+    },
+
+    "SubnetARouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "PublicSubnetA" },
+        "RouteTableId" : { "Ref" : "PublicRouteTable" }
+      }
+    },
+
+    "SubnetBRouteTableAssociation" : {
+      "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties" : {
+        "SubnetId" : { "Ref" : "PublicSubnetB" },
+        "RouteTableId" : { "Ref" : "PublicRouteTable" }
+      }
+    },
+
+    "SSHSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable SSH access",
+        "VpcId" : { "Ref" : "VPC" },
+        "SecurityGroupIngress" : 
+          [ { "IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"} }]
+      }
+    },
+
+    "LoadBalancerPublicSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "GroupDescription" : "Enable HTTP access to the Load Balancer",
+        "Tags" : [ {"Key" : "Name", "Value" : { "Fn::Join" : [ "", [ {"Ref" : "AWS::StackName"},  "-load-balancer-sg" ]]} }, {"Key" : "VPC", "Value" : { "Ref" : "AWS::StackName"} } ],
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80",  "CidrIp" : "0.0.0.0/0"}
+         ]
+      }
+    },
+
+    "HTTPFlaskSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "GroupDescription" : "Enable HTTP access on the default port 5000 to the Flask Server",
+        "Tags" : [ {"Key" : "Name", "Value" : { "Fn::Join" : [ "", [ {"Ref" : "AWS::StackName"},  "-flask-server-sg" ]]} }, {"Key" : "VPC", "Value" : { "Ref" : "AWS::StackName"} } ],
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "5000", "ToPort" : "5000",  "SourceSecurityGroupId" : { "Ref" : "LoadBalancerPublicSecurityGroup" } }
+         ]
+      }
+    },
+
+    "FlaskLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties" : {
+        "Scheme": "internet-facing",
+        "Subnets" : [ { "Ref" : "PublicSubnetA" }, { "Ref" : "PublicSubnetB" } ],
+        "SecurityGroups" : [ { "Ref" : "LoadBalancerPublicSecurityGroup" } ],
+        "Tags" : [ {"Key" : "Name", "Value" : { "Fn::Join" : [ "", [ {"Ref" : "AWS::StackName"},  "-flask-load-balancer" ]]} }, {"Key" : "VPC", "Value" : { "Ref" : "AWS::StackName"} } ]
+      }
+    },
+    "HTTPFlaskListener" : {
+      "Type" : "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties" : {
+        "DefaultActions" : [{
+          "Type" : "forward",
+          "TargetGroupArn" : { "Ref" : "FlaskTargetGroup" }
+        }],
+        "LoadBalancerArn" : { "Ref" : "FlaskLoadBalancer" },
+        "Port" : "80",
+        "Protocol" : "HTTP"
+      }
+    },
+    "FlaskTargetGroup" : {
+      "Type" : "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties" : {
+        "HealthCheckIntervalSeconds" : 30,
+        "HealthCheckTimeoutSeconds" : 25,
+        "HealthyThresholdCount" : 3,
+        "HealthCheckPath": "/",
+        "Port" : 5000,
+        "Protocol" : "HTTP",
+        "UnhealthyThresholdCount" : 5,
+        "VpcId" : {"Ref" : "VPC"}
+      }
+    },
+
+    "FlaskAutoScalingGroup" : {
+      "Type" : "AWS::AutoScaling::AutoScalingGroup",
+      "Properties" : {
+        "VPCZoneIdentifier" : [{ "Ref" : "PublicSubnetA" },{ "Ref" : "PublicSubnetB" }],  
+        "LaunchConfigurationName" : { "Ref" : "LaunchConfig" },
+        "MinSize" : "1",
+        "MaxSize" : "1",
+        "TargetGroupARNs" : [ { "Ref" : "FlaskTargetGroup" } ]
+      }
+    },
+
+    "LaunchConfig":{
+      "Type":"AWS::AutoScaling::LaunchConfiguration",
+      "Properties":{
+        "ImageId":{ "Fn::FindInMap" : [ "LocalUbuntuAMI", { "Ref" : "AWS::Region" }, "AMI" ]},
+        "SecurityGroups": [{ "Ref" : "SSHSecurityGroup" }, { "Ref" : "HTTPFlaskSecurityGroup" }],
+        "InstanceType":{ "Ref" : "InstanceType" },
+        "AssociatePublicIpAddress" : "true",
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash\n",
+          "# Update the instance packages \n",
+          "sudo apt -y update \n",
+          "sudo apt-get -y install \n",
+
+          "# Install Python \n",
+          "sudo apt install -y python3 \n",
+          "sudo apt install -y python3-pip \n",
+
+          "# Install unzip \n",
+          "sudo apt install unzip \n",
+
+          "# Install Flask and gunicorn using pip3 \n",
+          "sudo apt install -y python3-flask \n",
+          "sudo pip3 install gunicorn \n",
+
+          "# Create folders for the Demo app \n",
+          "mkdir /home/ubuntu/demo \n",
+          "mkdir /home/ubuntu/demo/templates \n",
+
+          "# Create the flask aplication file \n",
+          "cat<<EOF > /home/ubuntu/demo/app.py\n",
+          "from flask import Flask, render_template\n",
+          "app = Flask(__name__)\n",
+          "user = 'World'\n",
+          "#curl http://localhost:5000\n",
+          "@app.get('/')\n",
+          "def index():\n",
+          "  return render_template('index.html', user = user)\n",
+          "@app.get('/<param>')\n",
+          "def getuser(param):\n",
+          "  return render_template('index.html', user = param)\n",
+          "EOF",
+          "\n",
+
+          "# Create a main webpage \n",
+          "cat<<EOF > /home/ubuntu/demo/templates/index.html\n",
+          "<!DOCTYPE html>\n",
+          "<head>\n",
+          "<title>Demo</title>\n",
+          "</head>\n",
+          "<body>\n",
+          "<h1>Hello {{ user }}!</h1>\n",
+          "</body>\n",
+          "</html>\n",
+          "EOF",
+          "\n",
+
+          "# Create a systemd service for the Flask application \n",
+          "sudo tee /etc/systemd/system/flaskapp.service > /dev/null <<EOT\n",
+          "[Unit]\n",
+          "Description=Flask App\n",
+          "After=network.target\n",
+          "\n",
+          "[Service]\n",
+          "User=ubuntu\n",
+          "WorkingDirectory=/home/ubuntu/demo\n",
+          "Environment='PATH=/usr/local/bin'\n",
+          "ExecStart=/usr/local/bin/gunicorn --bind 0.0.0.0:5000 app:app\n",
+          "Restart=always\n",
+          "\n",
+          "[Install]\n",
+          "WantedBy=multi-user.target\n",
+          "EOT",
+          "\n",
+
+          "# Reload the systemd daemon \n",
+          "sudo systemctl daemon-reload \n",
+          "# Enable and start the Flask service \n",
+          "sudo systemctl enable flaskapp \n",
+          "sudo systemctl start flaskapp \n"
+        ]]}},
+
+      }
+    },
+
+
+  },
+  "Outputs" : {
+    "WebsiteURL" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "FlaskLoadBalancer", "DNSName" ]}, "/" ]]},
+      "Description" : "Flask Demo Website"
+    }
+  }
+}
